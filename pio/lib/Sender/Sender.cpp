@@ -452,3 +452,49 @@ bool SenderClass::sendTCONTROL(String server, uint16_t port)
     stopclient();
     return true;
 }
+
+bool SenderClass::sendBlink(String server, uint16_t port, String token, String url){
+    // http://{server}:{port}/{token}/update/{pin}
+    HTTPClient http;
+    String _fullURL;
+    String _value;
+    int _pinName = 0;
+    
+    CONSOLELN(F("HTTPAPI: puting"));
+    // configure traged server and url
+    
+    for (const auto &kv : _doc.as<JsonObject>())
+    {
+        _value = "[\""+String(kv.value().as<String>().c_str())+"\"]";
+        _pinName++;
+        _fullURL = "http://"+server+":"+String(port)+"/"+token + url +"/v"+String(_pinName);
+        http.begin(_client, _fullURL);
+        http.setReuse(true);
+        http.addHeader("User-Agent", "iSpindel");
+        http.addHeader("Connection", "close");
+        http.addHeader("Content-Type", "application/json");
+        
+        auto httpCode = http.PUT(_value);
+        CONSOLELN(String(F("code: ")) + httpCode);
+
+        // httpCode will be negative on error
+        if (httpCode > 0)
+        {
+            if (httpCode == HTTP_CODE_OK)
+            {
+                CONSOLELN(http.getString());
+            }
+        }
+        else
+        {
+            CONSOLE(F("[HTTP] PUT... failed, error: "));
+            CONSOLELN(http.errorToString(httpCode));
+        }
+
+        CONSOLELN("Blink put: "+_fullURL+ " => " + _value);
+    }
+
+    http.end();
+    stopclient();
+    return true;
+}

@@ -26,9 +26,8 @@ All rights reserverd by S.Lang <universam@web.de>
 
 #include "Sender.h"
 // !DEBUG 1
-
 // definitions go here
-MPU6050_Base accelgyro;
+MPU6050_Base accelgyro(MPU6050_ADDRESS_AD0_LOW);
 OneWire *oneWire;
 DallasTemperature DS18B20;
 DeviceAddress tempDeviceAddress;
@@ -210,10 +209,10 @@ bool readConfig()
           applyOffset();
 
           CONSOLELN(F("parsed config:"));
-#ifdef DEBUG
+          #ifdef DEBUG
           serializeJson(doc, Serial);
           CONSOLELN();
-#endif
+          #endif
           return true;
         }
         else
@@ -318,6 +317,7 @@ String htmlencode(String str)
 
 bool startConfiguration()
 {
+  CONSOLELN(F("startConfiguration"));
 
   WiFiManager wifiManager;
 
@@ -478,9 +478,9 @@ bool saveConfig()
   }
   else
   {
-#ifdef DEBUG
+    #ifdef DEBUG
     serializeJson(doc, Serial);
-#endif
+    #endif
     serializeJson(doc, configFile);
     configFile.close();
     SPIFFS.end();
@@ -494,19 +494,19 @@ bool processResponse(String response)
   DynamicJsonDocument doc(1024);
 
   DeserializationError error = deserializeJson(doc, response);
-    if (!error && doc.containsKey("interval"))
+  if (!error && doc.containsKey("interval"))
+  {
+    uint32_t interval = doc["interval"];
+    if (interval != my_sleeptime &&
+        interval < 24 * 60 * 60 &&
+        interval > 10)
     {
-      uint32_t interval = doc["interval"];
-      if (interval != my_sleeptime &&
-          interval < 24 * 60 * 60 &&
-          interval > 10)
-      {
-        my_sleeptime = interval;
-        CONSOLE(F("Received new Interval config: "));
-        CONSOLELN(interval);
-        return saveConfig();
-      }
+      my_sleeptime = interval;
+      CONSOLE(F("Received new Interval config: "));
+      CONSOLELN(interval);
+      return saveConfig();
     }
+  }
   return false;
 }
 
@@ -514,129 +514,145 @@ bool uploadData(uint8_t service)
 {
   SenderClass sender;
 
-#ifdef API_UBIDOTS
-  if (service == DTUbiDots)
-  {
-    sender.add("tilt", Tilt);
-    sender.add("temperature", scaleTemperature(Temperatur));
-    sender.add("battery", Volt);
-    sender.add("gravity", Gravity);
-    sender.add("interval", my_sleeptime);
-    sender.add("RSSI", WiFi.RSSI());
-    CONSOLELN(F("\ncalling Ubidots"));
-    return sender.sendUbidots(my_token, my_name);
-  }
-#endif
-
-#ifdef API_MQTT
-  if (service == DTMQTT)
-  {
-    sender.add("tilt", Tilt);
-    sender.add("temperature", scaleTemperature(Temperatur));
-    sender.add("temp_units", tempScaleLabel());
-    sender.add("battery", Volt);
-    sender.add("gravity", Gravity);
-    sender.add("interval", my_sleeptime);
-    sender.add("RSSI", WiFi.RSSI());
-    CONSOLELN(F("\ncalling MQTT"));
-    return sender.sendMQTT(my_server, my_port, my_username, my_password, my_name);
-  }
-#endif
-
-#ifdef API_INFLUXDB
-  if (service == DTInfluxDB)
-  {
-    sender.add("tilt", Tilt);
-    sender.add("temperature", scaleTemperature(Temperatur));
-    sender.add("temp_units", tempScaleLabel());
-    sender.add("battery", Volt);
-    sender.add("gravity", Gravity);
-    sender.add("interval", my_sleeptime);
-    sender.add("RSSI", WiFi.RSSI());
-    CONSOLELN(F("\ncalling InfluxDB"));
-    CONSOLELN(String(F("Sending to db: ")) + my_db + String(F(" w/ credentials: ")) + my_username + String(F(":")) + my_password);
-    return sender.sendInfluxDB(my_server, my_port, my_db, my_name, my_username, my_password);
-  }
-#endif
-
-#ifdef API_PROMETHEUS
-  if (service == DTPrometheus)
-  {
-    sender.add("tilt", Tilt);
-    sender.add("temperature", Temperatur);
-    sender.add("battery", Volt);
-    sender.add("gravity", Gravity);
-    sender.add("interval", my_sleeptime);
-    sender.add("RSSI", WiFi.RSSI());
-    CONSOLELN(F("\ncalling Prometheus Pushgateway"));
-    return sender.sendPrometheus(my_server, my_port, my_job, my_instance);
-  }
-#endif
-
-#ifdef API_GENERIC
-  if ((service == DTHTTP) || (service == DTCraftBeerPi) || (service == DTiSPINDELde) || (service == DTTCP))
-  {
-
-    sender.add("name", my_name);
-    sender.add("ID", ESP.getChipId());
-    if (my_token[0] != 0)
-      sender.add("token", my_token);
-    sender.add("angle", Tilt);
-    sender.add("temperature", scaleTemperature(Temperatur));
-    sender.add("temp_units", tempScaleLabel());
-    sender.add("battery", Volt);
-    sender.add("gravity", Gravity);
-    sender.add("interval", my_sleeptime);
-    sender.add("RSSI", WiFi.RSSI());
-
-    if (service == DTHTTP)
+  #ifdef API_UBIDOTS
+    if (service == DTUbiDots)
     {
-      CONSOLELN(F("\ncalling HTTP"));
-      return sender.sendGenericPost(my_server, my_url, my_port);
+      sender.add("tilt", Tilt);
+      sender.add("temperature", scaleTemperature(Temperatur));
+      sender.add("battery", Volt);
+      sender.add("gravity", Gravity);
+      sender.add("interval", my_sleeptime);
+      sender.add("RSSI", WiFi.RSSI());
+      CONSOLELN(F("\ncalling Ubidots"));
+      return sender.sendUbidots(my_token, my_name);
     }
-    else if (service == DTCraftBeerPi)
-    {
-      CONSOLELN(F("\ncalling CraftbeerPi"));
-      return sender.sendGenericPost(my_server, CBP_ENDPOINT, 5000);
-    }
-    else if (service == DTiSPINDELde)
-    {
-      CONSOLELN(F("\ncalling iSPINDELde"));
-      return sender.sendTCP("ispindle.de", 9501);
-    }
-    else if (service == DTTCP)
-    {
-      CONSOLELN(F("\ncalling TCP"));
-      String response = sender.sendTCP(my_server, my_port);
-      return processResponse(response);
-    }
-  }
-#endif // DATABASESYSTEM
+  #endif
 
-#ifdef API_FHEM
-  if (service == DTFHEM)
-  {
-    sender.add("angle", Tilt);
-    sender.add("temperature", scaleTemperature(Temperatur));
-    sender.add("temp_units", tempScaleLabel());
-    sender.add("battery", Volt);
-    sender.add("gravity", Gravity);
-    sender.add("ID", ESP.getChipId());
-    CONSOLELN(F("\ncalling FHEM"));
-    return sender.sendFHEM(my_server, my_port, my_name);
-  }
-#endif // DATABASESYSTEM ==
-#ifdef API_TCONTROL
-  if (service == DTTcontrol)
-  {
-    sender.add("T", scaleTemperature(Temperatur));
-    sender.add("D", Tilt);
-    sender.add("U", Volt);
-    sender.add("G", Gravity);
-    CONSOLELN(F("\ncalling TCONTROL"));
-    return sender.sendTCONTROL(my_server, 4968);
-  }
-#endif // DATABASESYSTEM ==
+  #ifdef API_BLINK
+    if (service == DTBLINK)
+    {
+      sender.add("tilt", Tilt);
+      sender.add("temperature", scaleTemperature(Temperatur));
+      sender.add("temp_units", tempScaleLabel());
+      sender.add("battery", Volt);
+      sender.add("gravity", Gravity);
+      sender.add("interval", my_sleeptime);
+      sender.add("RSSI", WiFi.RSSI());
+      CONSOLELN(F("\ncalling BLINK"));
+      return sender.sendBlink(my_server, my_port, my_token, my_url);
+    }
+  #endif
+
+  #ifdef API_MQTT
+    if (service == DTMQTT)
+    {
+      sender.add("tilt", Tilt);
+      sender.add("temperature", scaleTemperature(Temperatur));
+      sender.add("temp_units", tempScaleLabel());
+      sender.add("battery", Volt);
+      sender.add("gravity", Gravity);
+      sender.add("interval", my_sleeptime);
+      sender.add("RSSI", WiFi.RSSI());
+      CONSOLELN(F("\ncalling MQTT"));
+      return sender.sendMQTT(my_server, my_port, my_username, my_password, my_name);
+    }
+  #endif
+
+  #ifdef API_INFLUXDB
+    if (service == DTInfluxDB)
+    {
+      sender.add("tilt", Tilt);
+      sender.add("temperature", scaleTemperature(Temperatur));
+      sender.add("temp_units", tempScaleLabel());
+      sender.add("battery", Volt);
+      sender.add("gravity", Gravity);
+      sender.add("interval", my_sleeptime);
+      sender.add("RSSI", WiFi.RSSI());
+      CONSOLELN(F("\ncalling InfluxDB"));
+      CONSOLELN(String(F("Sending to db: ")) + my_db + String(F(" w/ credentials: ")) + my_username + String(F(":")) + my_password);
+      return sender.sendInfluxDB(my_server, my_port, my_db, my_name, my_username, my_password);
+    }
+  #endif
+
+  #ifdef API_PROMETHEUS
+    if (service == DTPrometheus)
+    {
+      sender.add("tilt", Tilt);
+      sender.add("temperature", Temperatur);
+      sender.add("battery", Volt);
+      sender.add("gravity", Gravity);
+      sender.add("interval", my_sleeptime);
+      sender.add("RSSI", WiFi.RSSI());
+      CONSOLELN(F("\ncalling Prometheus Pushgateway"));
+      return sender.sendPrometheus(my_server, my_port, my_job, my_instance);
+    }
+  #endif
+
+  #ifdef API_GENERIC
+    if ((service == DTHTTP) || (service == DTCraftBeerPi) || (service == DTiSPINDELde) || (service == DTTCP))
+    {
+
+      sender.add("name", my_name);
+      sender.add("ID", ESP.getChipId());
+      if (my_token[0] != 0)
+        sender.add("token", my_token);
+      sender.add("angle", Tilt);
+      sender.add("temperature", scaleTemperature(Temperatur));
+      sender.add("temp_units", tempScaleLabel());
+      sender.add("battery", Volt);
+      sender.add("gravity", Gravity);
+      sender.add("interval", my_sleeptime);
+      sender.add("RSSI", WiFi.RSSI());
+
+      if (service == DTHTTP)
+      {
+        CONSOLELN(F("\ncalling HTTP"));
+        return sender.sendGenericPost(my_server, my_url, my_port);
+      }
+      else if (service == DTCraftBeerPi)
+      {
+        CONSOLELN(F("\ncalling CraftbeerPi"));
+        return sender.sendGenericPost(my_server, CBP_ENDPOINT, 5000);
+      }
+      else if (service == DTiSPINDELde)
+      {
+        CONSOLELN(F("\ncalling iSPINDELde"));
+        return sender.sendTCP("ispindle.de", 9501);
+      }
+      else if (service == DTTCP)
+      {
+        CONSOLELN(F("\ncalling TCP"));
+        String response = sender.sendTCP(my_server, my_port);
+        return processResponse(response);
+      }
+    }
+  #endif // DATABASESYSTEM
+
+  #ifdef API_FHEM
+    if (service == DTFHEM)
+    {
+      sender.add("angle", Tilt);
+      sender.add("temperature", scaleTemperature(Temperatur));
+      sender.add("temp_units", tempScaleLabel());
+      sender.add("battery", Volt);
+      sender.add("gravity", Gravity);
+      sender.add("ID", ESP.getChipId());
+      CONSOLELN(F("\ncalling FHEM"));
+      return sender.sendFHEM(my_server, my_port, my_name);
+    }
+  #endif // DATABASESYSTEM ==
+  #ifdef API_TCONTROL
+    if (service == DTTcontrol)
+    {
+      sender.add("T", scaleTemperature(Temperatur));
+      sender.add("D", Tilt);
+      sender.add("U", Volt);
+      sender.add("G", Gravity);
+      CONSOLELN(F("\ncalling TCONTROL"));
+      return sender.sendTCONTROL(my_server, 4968);
+    }
+  #endif // DATABASESYSTEM ==
+  CONSOLELN(F("\nNot service calling"));
   return false;
 }
 
@@ -697,7 +713,8 @@ void requestTemp()
 {
   if (!DSreqTime)
   {
-    DS18B20.requestTemperatures();
+
+    // DS18B20.requestTemperatures();
     DSreqTime = millis();
   }
 }
@@ -744,6 +761,13 @@ void initDS18B20()
   requestTemp();
 }
 
+void initTempSensor()
+{
+  pinMode(D6, INPUT);
+  // digitalWrite(D6, LOW);
+  delay(100);
+}
+
 bool isDS18B20ready()
 {
   return millis() - DSreqTime > OWinterval;
@@ -762,10 +786,10 @@ void initAccel()
   accelgyro.setFullScaleGyroRange(MPU6050_GYRO_FS_250);
   accelgyro.setDLPFMode(MPU6050_DLPF_BW_5);
   accelgyro.setTempSensorEnabled(true);
-#ifdef USE_DMP
-  accelgyro.setDMPEnabled(true);
-  packetSize = accelgyro.dmpGetFIFOPacketSize();
-#endif
+  #ifdef USE_DMP
+    accelgyro.setDMPEnabled(true);
+    packetSize = accelgyro.dmpGetFIFOPacketSize();
+  #endif
   accelgyro.setInterruptLatch(0); // pulse
   accelgyro.setInterruptMode(1);  // Active Low
   accelgyro.setInterruptDrive(1); // Open drain
@@ -832,7 +856,7 @@ float getTilt()
 float getTemperature(bool block = false)
 {
   float t = Temperatur;
-
+return 20;
   // we need to wait for DS18b20 to finish conversion
   if (!DSreqTime ||
       (!block && !isDS18B20ready()))
@@ -1046,7 +1070,8 @@ void setup()
   bool validConf = readConfig();
   if (!validConf)
     CONSOLELN(F("\nERROR config corrupted"));
-  initDS18B20();
+  // initDS18B20();
+  initTempSensor();
   initAccel();
 
   // decide whether we want configuration mode or normal mode
@@ -1076,6 +1101,7 @@ void setup()
     // rescue if wifi credentials lost because of power loss
     if (!startConfiguration())
     {
+      CONSOLELN(F("Not start config"));
       // test if ssid exists
       if (WiFi.SSID() == "" &&
           my_ssid != "" && my_psk != "")
@@ -1097,60 +1123,60 @@ void setup()
   else
     WiFi.setOutputPower(20.5);
 
-#ifndef USE_DMP
-  Tilt = getTilt();
-#else
-  while (fifoCount < packetSize)
-  {
-    //do stuff
-    CONSOLELN(F("wait DMP"));
+  #ifndef USE_DMP
+    Tilt = getTilt();
+  #else
+    while (fifoCount < packetSize)
+    {
+      //do stuff
+      CONSOLELN(F("wait DMP"));
 
-    fifoCount = accelgyro.getFIFOCount();
-  }
-  if (fifoCount == 1024)
-  {
-    CONSOLELN(F("FIFO overflow"));
-    accelgyro.resetFIFO();
-  }
-  else
-  {
-    fifoCount = accelgyro.getFIFOCount();
-
-    accelgyro.getFIFOBytes(fifoBuffer, packetSize);
-
-    accelgyro.resetFIFO();
-
-    fifoCount -= packetSize;
-
-    accelgyro.dmpGetQuaternion(&q, fifoBuffer);
-    accelgyro.dmpGetEuler(euler, &q);
-
-    /*
-    for (int i = 1; i < 64; i++) {
-    CONSOLE(fifoBuffer[i]);
-    CONSOLE(" ");
+      fifoCount = accelgyro.getFIFOCount();
     }
-    */
+    if (fifoCount == 1024)
+    {
+      CONSOLELN(F("FIFO overflow"));
+      accelgyro.resetFIFO();
+    }
+    else
+    {
+      fifoCount = accelgyro.getFIFOCount();
 
-    CONSOLE(F("euler\t"));
-    CONSOLE((euler[0] * 180 / M_PI));
-    CONSOLE("\t");
-    CONSOLE(euler[1] * 180 / M_PI);
-    CONSOLE("\t");
-    CONSOLELN(euler[2] * 180 / M_PI);
+      accelgyro.getFIFOBytes(fifoBuffer, packetSize);
 
-    ax = euler[0];
-    ay = euler[2];
-    az = euler[1];
+      accelgyro.resetFIFO();
 
-    float _ax = ax;
-    float _ay = ay;
-    float _az = az;
-    float pitch = (atan2(_ay, sqrt(_ax * _ax + _az * _az))) * 180.0 / M_PI;
-    float roll = (atan2(_ax, sqrt(_ay * _ay + _az * _az))) * 180.0 / M_PI;
-    Tilt = sqrt(pitch * pitch + roll * roll);
-  }
-#endif
+      fifoCount -= packetSize;
+
+      accelgyro.dmpGetQuaternion(&q, fifoBuffer);
+      accelgyro.dmpGetEuler(euler, &q);
+
+      /*
+      for (int i = 1; i < 64; i++) {
+      CONSOLE(fifoBuffer[i]);
+      CONSOLE(" ");
+      }
+      */
+
+      CONSOLE(F("euler\t"));
+      CONSOLE((euler[0] * 180 / M_PI));
+      CONSOLE("\t");
+      CONSOLE(euler[1] * 180 / M_PI);
+      CONSOLE("\t");
+      CONSOLELN(euler[2] * 180 / M_PI);
+
+      ax = euler[0];
+      ay = euler[2];
+      az = euler[1];
+
+      float _ax = ax;
+      float _ay = ay;
+      float _az = az;
+      float pitch = (atan2(_ay, sqrt(_ax * _ax + _az * _az))) * 180.0 / M_PI;
+      float roll = (atan2(_ax, sqrt(_ay * _ay + _az * _az))) * 180.0 / M_PI;
+      Tilt = sqrt(pitch * pitch + roll * roll);
+    }
+  #endif
 
   float accTemp = accelgyro.getTemperature() / 340.00 + 36.53;
   accelgyro.setSleepEnabled(true);
