@@ -17,6 +17,7 @@
 
 #include <I2Cdev.h>
 #include <MPU6050.h>
+
 extern Ticker flasher;
 
 // defines go here
@@ -58,6 +59,7 @@ extern Ticker flasher;
 #define PORTALTIMEOUT 300
 
 #define ADCDIVISOR 191.8
+#define DHT_PIN D6
 #define ONE_WIRE_BUS D6 // DS18B20 on ESP pin12
 #define OW_PINS \
     (const uint8_t[]) { D1, D6 }

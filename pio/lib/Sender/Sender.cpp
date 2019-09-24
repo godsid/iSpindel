@@ -453,14 +453,14 @@ bool SenderClass::sendTCONTROL(String server, uint16_t port)
     return true;
 }
 
-bool SenderClass::sendBlink(String server, uint16_t port, String token, String url){
+bool SenderClass::sendBlynk(String server, uint16_t port, String token, String url){
     // http://{server}:{port}/{token}/update/{pin}
     HTTPClient http;
     String _fullURL;
     String _value;
     int _pinName = 0;
     
-    CONSOLELN(F("HTTPAPI: puting"));
+    CONSOLELN(F("BLYNK API: puting"));
     // configure traged server and url
     
     for (const auto &kv : _doc.as<JsonObject>())
@@ -491,7 +491,7 @@ bool SenderClass::sendBlink(String server, uint16_t port, String token, String u
             CONSOLELN(http.errorToString(httpCode));
         }
 
-        CONSOLELN("Blink put: "+_fullURL+ " => " + _value);
+        CONSOLELN("Blynk put:("+String(kv.key().c_str())+") "+_fullURL+ " => " + _value);
     }
 
     http.end();

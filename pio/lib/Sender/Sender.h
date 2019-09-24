@@ -23,7 +23,7 @@ public:
   bool sendPrometheus(String server, uint16_t port, String job, String instance);
   bool sendUbidots(String token, String name);
   bool sendMQTT(String server, uint16_t port, String username, String password, String name);
-  bool sendBlink(String server, uint16_t port, String token, String url);
+  bool sendBlynk(String server, uint16_t port, String token, String url);
   bool sendFHEM(String server, uint16_t port, String name);
   bool sendTCONTROL(String server, uint16_t port);
   void add(String id, float value);

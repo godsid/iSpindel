@@ -23,7 +23,8 @@ All rights reserverd by S.Lang <universam@web.de>
 #include <ESP8266WiFi.h> //https://github.com/esp8266/Arduino
 #include <FS.h>          //this needs to be first
 #include "tinyexpr.h"
-
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
 #include "Sender.h"
 // !DEBUG 1
 // definitions go here
@@ -31,7 +32,7 @@ MPU6050_Base accelgyro(MPU6050_ADDRESS_AD0_LOW);
 OneWire *oneWire;
 DallasTemperature DS18B20;
 DeviceAddress tempDeviceAddress;
-Ticker flasher;
+Ticker flasher, tempTicker;
 RunningMedian samples = RunningMedian(MEDIANROUNDSMAX);
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 
@@ -41,6 +42,10 @@ DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 
 int detectTempSensor(const uint8_t pins[]);
 bool testAccel();
+float getTemperature(bool block);
+void dhtHandleData(float h, float t);
+void dhtHandleError(uint8_t e);
+void readDHT();
 
 #ifdef USE_DMP
 #include "MPU6050.h"
@@ -63,7 +68,9 @@ float euler[3];      // [psi, theta, phi]    Euler angle container
 float ypr[3];        // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 #endif
 
+DHT22 dhtSensor;
 bool shouldSaveConfig = false;
+
 
 char my_token[TKIDSIZE * 2];
 char my_name[TKIDSIZE] = "iSpindel000";
@@ -90,7 +97,7 @@ uint32_t DSreqTime = 0;
 float pitch, roll;
 
 int16_t ax, ay, az;
-float Volt, Temperatur, Tilt, Gravity; // , corrGravity;
+float Volt, Temperatur, Tilt, Gravity, Humidity; // , corrGravity;
 
 float scaleTemperature(float t)
 {
@@ -318,17 +325,15 @@ String htmlencode(String str)
 bool startConfiguration()
 {
   CONSOLELN(F("startConfiguration"));
-
   WiFiManager wifiManager;
-
   wifiManager.setConfigPortalTimeout(PORTALTIMEOUT);
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setBreakAfterConfig(true);
 
   WiFiManagerParameter api_list(HTTP_API_LIST);
+  
   WiFiManagerParameter custom_api("selAPI", "selAPI", String(my_api).c_str(),
                                   20, TYPE_HIDDEN, WFM_NO_LABEL);
-
   WiFiManagerParameter custom_name("name", "iSpindel Name", htmlencode(my_name).c_str(),
                                    TKIDSIZE * 2);
   WiFiManagerParameter custom_sleep("sleep", "Update Interval (s)",
@@ -352,18 +357,15 @@ bool startConfiguration()
   WiFiManagerParameter custom_tempscale("tempscale", "tempscale",
                                         String(my_tempscale).c_str(),
                                         5, TYPE_HIDDEN, WFM_NO_LABEL);
-
   wifiManager.addParameter(&custom_name);
   wifiManager.addParameter(&custom_sleep);
   wifiManager.addParameter(&custom_vfact);
-
   WiFiManagerParameter custom_tempscale_hint("<label for=\"TS\">Unit of temperature</label>");
   wifiManager.addParameter(&custom_tempscale_hint);
   wifiManager.addParameter(&tempscale_list);
   wifiManager.addParameter(&custom_tempscale);
   WiFiManagerParameter custom_api_hint("<hr><label for=\"API\">Service Type</label>");
   wifiManager.addParameter(&custom_api_hint);
-
   wifiManager.addParameter(&api_list);
   wifiManager.addParameter(&custom_api);
 
@@ -380,7 +382,6 @@ bool startConfiguration()
   wifiManager.addParameter(&custom_polynom_lbl);
   WiFiManagerParameter custom_polynom("POLYN", "Polynominal", htmlencode(my_polynominal).c_str(), 100 * 2, WFM_NO_LABEL);
   wifiManager.addParameter(&custom_polynom);
-
   wifiManager.setConfSSID(htmlencode(my_ssid));
   wifiManager.setConfPSK(htmlencode(my_psk));
 
@@ -388,7 +389,6 @@ bool startConfiguration()
   wifiManager.startConfigPortal("iSpindel");
 
   strcpy(my_polynominal, custom_polynom.getValue());
-
   validateInput(custom_name.getValue(), my_name);
   validateInput(custom_token.getValue(), my_token);
   validateInput(custom_server.getValue(), my_server);
@@ -398,12 +398,10 @@ bool startConfiguration()
   validateInput(custom_job.getValue(), my_job);
   validateInput(custom_instance.getValue(), my_instance);
   my_sleeptime = String(custom_sleep.getValue()).toInt();
-
   my_api = String(custom_api.getValue()).toInt();
   my_port = String(custom_port.getValue()).toInt();
   my_tempscale = String(custom_tempscale.getValue()).toInt();
   validateInput(custom_url.getValue(), my_url);
-
   String tmp = custom_vfact.getValue();
   tmp.trim();
   tmp.replace(',', '.');
@@ -417,9 +415,9 @@ bool startConfiguration()
     // Wifi config
     WiFi.setAutoConnect(true);
     WiFi.setAutoReconnect(true);
-
     return saveConfig();
   }
+  CONSOLELN("Config not save");
   return false;
 }
 
@@ -484,7 +482,7 @@ bool saveConfig()
     serializeJson(doc, configFile);
     configFile.close();
     SPIFFS.end();
-    CONSOLELN(F("saved successfully"));
+    CONSOLELN(F("saved config successfully"));
     return true;
   }
 }
@@ -539,7 +537,7 @@ bool uploadData(uint8_t service)
       sender.add("interval", my_sleeptime);
       sender.add("RSSI", WiFi.RSSI());
       CONSOLELN(F("\ncalling BLINK"));
-      return sender.sendBlink(my_server, my_port, my_token, my_url);
+      return sender.sendBlynk(my_server, my_port, my_token, my_url);
     }
   #endif
 
@@ -711,10 +709,10 @@ void sleepManager()
 
 void requestTemp()
 {
+  return;
   if (!DSreqTime)
   {
-
-    // DS18B20.requestTemperatures();
+    DS18B20.requestTemperatures();
     DSreqTime = millis();
   }
 }
@@ -761,11 +759,19 @@ void initDS18B20()
   requestTemp();
 }
 
+void initDHT22()
+{
+  /* Temperature */
+  dhtSensor.setPin(DHT_PIN);
+  dhtSensor.onData(dhtHandleData);
+  dhtSensor.onError(dhtHandleError);
+  tempTicker.attach(2, readDHT);
+}
+
 void initTempSensor()
 {
-  pinMode(D6, INPUT);
-  // digitalWrite(D6, LOW);
-  delay(100);
+    initDHT22();
+    // initDS18B20();
 }
 
 bool isDS18B20ready()
@@ -852,11 +858,29 @@ float getTilt()
   CONSOLELN(millis() - start);
   return samples.getAverage(MEDIANAVRG);
 }
+void readDHT()
+{
+  dhtSensor.read();
+}
+
+// this callback will be called from an interrupt
+// it should be short and carry the ICACHE_RAM_ATTR attribute
+void ICACHE_RAM_ATTR dhtHandleData(float h, float t) {
+  Humidity = h;
+  Temperatur = t;
+}
+
+void ICACHE_RAM_ATTR dhtHandleError(uint8_t e) {
+  CONSOLELN("DHT Error: "+String(e));
+}
 
 float getTemperature(bool block = false)
 {
   float t = Temperatur;
-return 20;
+  CONSOLELN(F("getTemperature"));
+  return t;
+  
+  // for DS18b20
   // we need to wait for DS18b20 to finish conversion
   if (!DSreqTime ||
       (!block && !isDS18B20ready()))
@@ -1033,7 +1057,7 @@ void flash()
   if (testAccel())
     getAccSample();
   Tilt = calculateTilt();
-  Temperatur = getTemperature(false);
+  Temperatur = getTemperature(true);
   Gravity = calculateGravity();
   requestTemp();
 }
@@ -1066,11 +1090,9 @@ void setup()
   CONSOLELN(ESP.getSdkVersion());
 
   sleepManager();
-
   bool validConf = readConfig();
   if (!validConf)
     CONSOLELN(F("\nERROR config corrupted"));
-  // initDS18B20();
   initTempSensor();
   initAccel();
 
